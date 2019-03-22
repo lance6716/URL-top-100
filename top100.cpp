@@ -4,6 +4,7 @@
 #include <queue>
 #include <vector>
 #include <string>
+#include "takeapart.h"
 
 typedef std::map<std::string, int> StrIntMap;
 
@@ -28,6 +29,10 @@ void countWords(std::istream& in, StrIntMap& words) {
 }
 
 int main(int argc, char** argv) {
+    if (take_apart() != 0) {
+        exit(EXIT_FAILURE);
+    }
+
     char pathbuffer[100];
     int c;
     std::string s;

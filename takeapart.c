@@ -19,12 +19,10 @@
  * 
  */
 
-
-const char *INFILE = "infile.txt";
-const char *BUCKETFOLDER = "buckets";
-const size_t URLMAXLEN = 2084;
-
-int main() {
+int take_apart() {
+    const char *INFILE = "infile.txt";
+    const char *BUCKETFOLDER = "buckets";
+    const size_t URLMAXLEN = 2084;
     FILE *infilefp;
     FILE *bucketfp[256];
     size_t linelen = URLMAXLEN;
@@ -62,8 +60,6 @@ int main() {
 //                hash[0], hash[1], hash[2], hash[3], line); //TODO: fail
     }
 
-    
-
 
     for (uint32_t i = 0; i < 256; i++) {
         fclose(bucketfp[i]);
@@ -72,5 +68,5 @@ int main() {
     if (line) {
         free(line);
     }
-    exit(EXIT_SUCCESS);
+    return 0;
 }

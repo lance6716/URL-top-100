@@ -4,7 +4,9 @@
 #include <queue>
 #include <vector>
 #include <cstring>
-#include <string>
+#include <inttypes.h>
+#include <stdio.h>
+
 #include "takeapart.h"
 #include "utils.h" 
 
@@ -38,26 +40,33 @@ struct UrlEqual {
 
 struct Urlfreq {
     int count;
-    std::string url;
-    Urlfreq(int c, std::string u) : count(c), url(std::move(u)) {}
+    char *url;
+    Urlfreq(int c, char *u) : count(c) {
+        url = (char *)malloc((strlen(u) + 1) * sizeof(char));
+        sprintf(url, "%s", u);
+    }
+    ~Urlfreq() {
+        free(url);
+    }
 };
 
 struct Comp {
-    bool operator()(const Urlfreq &a, const Urlfreq &b) {
-        return a.count > b.count;
+    bool operator()(const Urlfreq *a, const Urlfreq *b) {
+        return a->count > b->count;
     }
 };
 
 typedef std::unordered_map<Url, int, UrlHash, UrlEqual> CounterMap;
 
-void countWords(std::istream& in, CounterMap& words) {
-    std::string s;
+void countWords(FILE *in, CounterMap& words) {
     uint32_t a, b, c, d;
+    char urlbuffer[URL_MAXLEN];
 
     //TODO: need serialization and deserialization
-    while (in >> a >> b >> c >> d >> s) { 
-        Url *tmp = new Url(a, b, c, d, s.c_str());
-        ++words[*tmp];
+    while (fscanf(in, "%" PRIu32 " %" PRIu32 " %" PRIu32 " %" PRIu32 " %s",
+                  &a, &b, &c, &d, urlbuffer) != EOF) { 
+        Url *tmp = new Url(a, b, c, d, urlbuffer);
+        ++words[*tmp]; //TODO: copy-construction or move or pass reference?
     }
 }
 
@@ -67,44 +76,48 @@ int main(int argc, char** argv) {
     }
 
     char pathbuffer[PATH_MAXLEN];
+    char urlbuffer[URL_MAXLEN];
     int c;
-    std::string s;
-    std::priority_queue<Urlfreq, std::vector<Urlfreq>, Comp> pq;
-    std::vector<Urlfreq> result;
+    std::priority_queue<Urlfreq *, std::vector<Urlfreq *>, Comp> pq;
+    std::vector<Urlfreq *> result;
+    FILE *infilefp;
 
     for (auto i = 0; i < BUCKET_NUM; i++) {
         sprintf(pathbuffer, "%s/%08x", BUCKET_FOLDER, i);
-        std::ifstream in(pathbuffer);
+        if ((infilefp = fopen(pathbuffer, "r")) == NULL) {
+            printf("error when open file, errno = %d\n", errno);
+            exit(EXIT_FAILURE);
+        }
         sprintf(pathbuffer, "%s/%08x.out", BUCKET_FOLDER, i);
         std::ofstream out(pathbuffer);
-
-        if (!in)
-            exit(EXIT_FAILURE);
-
+            
         CounterMap w;
-        countWords(in, w);
+        countWords(infilefp, w);
 
-        for (CounterMap::iterator p = w.begin();
-            p != w.end(); ++p) {
+        for (CounterMap::iterator p = w.begin(); p != w.end(); ++p) {
             out << p->second << " " << p->first.url_with_prefix + 3 * 8 << "\n";
         }
-        in.close();
+        fclose(infilefp);
         out.close();
         // std::cout << "map is going to destruction" << std::endl;
     }
 
     for (auto i = 0; i < BUCKET_NUM; i++) {
         sprintf(pathbuffer, "%s/%08x.out", BUCKET_FOLDER, i);
-        std::ifstream in(pathbuffer);
+        if ((infilefp = fopen(pathbuffer, "r")) == NULL) {
+            printf("error when open file, errno = %d\n", errno);
+            exit(EXIT_FAILURE);
+        }
 
-        while(in >> c >> s) {
-            Urlfreq uf = Urlfreq(c, s);
+        while(fscanf(infilefp, "%d %s", &c, urlbuffer) != EOF) {
+            Urlfreq *uf = new Urlfreq(c, urlbuffer);
             pq.push(uf);
             if (pq.size() > TOPK) {
+                delete pq.top();
                 pq.pop();
             }
         }
-        in.close();
+        fclose(infilefp);
     }
 
     while (pq.size() > 0) {
@@ -113,6 +126,6 @@ int main(int argc, char** argv) {
     }
 
     for (auto it = result.crbegin(); it != result.crend(); it++) {
-        std::cout << it->count << " " << it->url << "\n";
+        std::cout << (*it)->count << " " << (*it)->url << "\n";
     }
 }

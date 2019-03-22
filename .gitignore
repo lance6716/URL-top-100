@@ -1,0 +1,5 @@
+buckets/*
+*.o
+infile.txt
+top100
+countfreq

@@ -1,12 +1,40 @@
 #include <iostream>
 #include <fstream>
-#include <map>
+#include <unordered_map>
 #include <queue>
 #include <vector>
+#include <cstring>
 #include <string>
 #include "takeapart.h"
+#include "utils.h" 
 
-typedef std::map<std::string, int> StrIntMap;
+struct Url {
+    size_t hash;
+    char *url_with_prefix;
+    Url(uint32_t a, uint32_t b, uint32_t c, uint32_t d, const char *url) {
+        hash = d;
+        url_with_prefix = (char *)malloc((strlen(url) + 1 + 3 * 8) * sizeof(char));
+        //TODO: save len, avoid strlen
+
+        sprintf(url_with_prefix, "%08x%08x%08x%s", a, b, c, url);
+    }
+    ~Url() {
+        // std::cout << "Url destruction" << std::endl;
+        free(url_with_prefix);
+    }
+};
+
+struct UrlHash {
+    size_t operator()(const Url &url) const {
+        return url.hash;
+    }
+};
+
+struct UrlEqual {
+    bool operator()(const Url &a, const Url &b) const {
+        return strcmp(a.url_with_prefix, b.url_with_prefix) == 0;
+    }
+};
 
 struct Urlfreq {
     int count;
@@ -20,56 +48,63 @@ struct Comp {
     }
 };
 
-void countWords(std::istream& in, StrIntMap& words) {
-   std::string s;
+typedef std::unordered_map<Url, int, UrlHash, UrlEqual> CounterMap;
 
-   while (in >> s) {
-      ++words[s];
-   }
+void countWords(std::istream& in, CounterMap& words) {
+    std::string s;
+    uint32_t a, b, c, d;
+
+    //TODO: need serialization and deserialization
+    while (in >> a >> b >> c >> d >> s) { 
+        Url *tmp = new Url(a, b, c, d, s.c_str());
+        ++words[*tmp];
+    }
 }
 
 int main(int argc, char** argv) {
-    if (take_apart() != 0) {
+    if (take_apart(INFILE) != 0) { //TODO: argv[1]
         exit(EXIT_FAILURE);
     }
 
-    char pathbuffer[100];
+    char pathbuffer[PATH_MAXLEN];
     int c;
     std::string s;
-
     std::priority_queue<Urlfreq, std::vector<Urlfreq>, Comp> pq;
     std::vector<Urlfreq> result;
 
-    const char *FOLDER = "buckets";
-    for (uint32_t i = 0; i < 256; i++) {
-        sprintf(pathbuffer, "%s/%08x", FOLDER, i);
+    for (auto i = 0; i < BUCKET_NUM; i++) {
+        sprintf(pathbuffer, "%s/%08x", BUCKET_FOLDER, i);
         std::ifstream in(pathbuffer);
-        sprintf(pathbuffer, "%s/%08x.out", FOLDER, i);
+        sprintf(pathbuffer, "%s/%08x.out", BUCKET_FOLDER, i);
         std::ofstream out(pathbuffer);
 
         if (!in)
             exit(EXIT_FAILURE);
 
-        StrIntMap w;
+        CounterMap w;
         countWords(in, w);
 
-        for (StrIntMap::iterator p = w.begin();
+        for (CounterMap::iterator p = w.begin();
             p != w.end(); ++p) {
-            out << p->second << " " << p->first << "\n";
+            out << p->second << " " << p->first.url_with_prefix + 3 * 8 << "\n";
         }
+        in.close();
+        out.close();
+        // std::cout << "map is going to destruction" << std::endl;
     }
 
-    for (uint32_t i = 0; i < 256; i++) {
-        sprintf(pathbuffer, "%s/%08x.out", FOLDER, i);
+    for (auto i = 0; i < BUCKET_NUM; i++) {
+        sprintf(pathbuffer, "%s/%08x.out", BUCKET_FOLDER, i);
         std::ifstream in(pathbuffer);
 
         while(in >> c >> s) {
             Urlfreq uf = Urlfreq(c, s);
             pq.push(uf);
-            if (pq.size() > 100) {
+            if (pq.size() > TOPK) {
                 pq.pop();
             }
         }
+        in.close();
     }
 
     while (pq.size() > 0) {

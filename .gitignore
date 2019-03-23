@@ -1,5 +1,5 @@
 buckets/*
 *.o
-infile.txt
+infile*
 top100
 countfreq

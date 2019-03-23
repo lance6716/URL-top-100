@@ -1,7 +1,7 @@
 #include <iostream>
-#include <fstream>
 #include <unordered_map>
 #include <queue>
+#include <chrono>
 #include <vector>
 #include <cstring>
 #include <inttypes.h>
@@ -20,8 +20,13 @@ struct Url {
 
         sprintf(url_with_prefix, "%08x%08x%08x%s", a, b, c, url);
     }
+    Url(const Url &other) {
+        hash = other.hash;
+        size_t len = strlen(other.url_with_prefix) + 1;
+        url_with_prefix = (char *)malloc(len * sizeof(char));
+        memcpy(url_with_prefix, other.url_with_prefix, len);
+    }
     ~Url() {
-        // std::cout << "Url destruction" << std::endl;
         free(url_with_prefix);
     }
 };
@@ -56,7 +61,7 @@ struct Comp {
     }
 };
 
-typedef std::unordered_map<Url, int, UrlHash, UrlEqual> CounterMap;
+typedef std::unordered_map<Url, uint32_t, UrlHash, UrlEqual> CounterMap;
 
 void countWords(FILE *in, CounterMap& words) {
     uint32_t a, b, c, d;
@@ -66,21 +71,32 @@ void countWords(FILE *in, CounterMap& words) {
     while (fscanf(in, "%" PRIu32 " %" PRIu32 " %" PRIu32 " %" PRIu32 " %s",
                   &a, &b, &c, &d, urlbuffer) != EOF) { 
         Url *tmp = new Url(a, b, c, d, urlbuffer);
-        ++words[*tmp]; //TODO: copy-construction or move or pass reference?
+        ++words[*tmp];
+        delete tmp;
     }
 }
 
 int main(int argc, char** argv) {
+    auto start = std::chrono::high_resolution_clock::now();
+
     if (take_apart(INFILE) != 0) { //TODO: argv[1]
         exit(EXIT_FAILURE);
     }
 
+    auto finish = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> elapsed = finish - start;
+    std::cout << "1 Elapsed time: " << elapsed.count() << " s\n";
+    start = finish;
+
+    /* Stage 1 complete */
+
     char pathbuffer[PATH_MAXLEN];
     char urlbuffer[URL_MAXLEN];
-    int c;
+    int c; //TODO: overflow
     std::priority_queue<Urlfreq *, std::vector<Urlfreq *>, Comp> pq;
     std::vector<Urlfreq *> result;
     FILE *infilefp;
+    FILE *outfilefp;
 
     for (auto i = 0; i < BUCKET_NUM; i++) {
         sprintf(pathbuffer, "%s/%08x", BUCKET_FOLDER, i);
@@ -89,18 +105,28 @@ int main(int argc, char** argv) {
             exit(EXIT_FAILURE);
         }
         sprintf(pathbuffer, "%s/%08x.out", BUCKET_FOLDER, i);
-        std::ofstream out(pathbuffer);
-            
+        if ((outfilefp = fopen(pathbuffer, "w")) == NULL) {
+            printf("error when open file, errno = %d\n", errno);
+            exit(EXIT_FAILURE);
+        }
+
         CounterMap w;
         countWords(infilefp, w);
 
         for (CounterMap::iterator p = w.begin(); p != w.end(); ++p) {
-            out << p->second << " " << p->first.url_with_prefix + 3 * 8 << "\n";
+            fprintf(outfilefp, "%" PRIu32 " %s\n", 
+                    p->second, p->first.url_with_prefix + 3 * 8);
         }
         fclose(infilefp);
-        out.close();
-        // std::cout << "map is going to destruction" << std::endl;
+        fclose(outfilefp);
     }
+
+    finish = std::chrono::high_resolution_clock::now();
+    elapsed = finish - start;
+    std::cout << "2 Elapsed time: " << elapsed.count() << " s\n";
+    start = finish;
+
+    /* Stage 2 complete */
 
     for (auto i = 0; i < BUCKET_NUM; i++) {
         sprintf(pathbuffer, "%s/%08x.out", BUCKET_FOLDER, i);
@@ -127,5 +153,10 @@ int main(int argc, char** argv) {
 
     for (auto it = result.crbegin(); it != result.crend(); it++) {
         std::cout << (*it)->count << " " << (*it)->url << "\n";
-    }
+    } // ! need delete elements in result if append code
+    finish = std::chrono::high_resolution_clock::now();
+    elapsed = finish - start;
+    std::cout << "3 Elapsed time: " << elapsed.count() << " s\n";
+
+    /* Stage 3 complete */
 }

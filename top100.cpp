@@ -6,8 +6,9 @@
 #include <cstring>
 #include <inttypes.h>
 #include <pthread.h>
+#include <unistd.h>
 #include <stdio.h>
-#include <sys/stat.h>
+#include <sys/resource.h>
 
 #include "takeapart.h"
 #include "utils.h" 
@@ -65,7 +66,7 @@ struct Comp {
 
 typedef std::unordered_map<Url, uint32_t, UrlHash, UrlEqual> CounterMap;
 
-void countWords(FILE *in, CounterMap& words) {
+void countWords(FILE *in, CounterMap& counter) {
     uint32_t a, b, c, d;
     char urlbuffer[URL_MAXLEN];
 
@@ -73,16 +74,37 @@ void countWords(FILE *in, CounterMap& words) {
     while (fscanf(in, "%" PRIu32 " %" PRIu32 " %" PRIu32 " %" PRIu32 " %s",
                   &a, &b, &c, &d, urlbuffer) != EOF) { 
         Url *tmp = new Url(a, b, c, d, urlbuffer);
-        ++words[*tmp];
+        ++counter[*tmp];
         delete tmp;
     }
 }
 
-off_t bucketsize[BUCKET_NUM];
-off_t loadsize = 0;
+long getrss() {
+    FILE *fp = NULL;
+    long rss = 0;
+    char *line = NULL;
+    size_t len = 0;
+    if ((fp = fopen("/proc/self/status", "r")) == NULL) {
+        printf("error when get memory\n");
+        exit(EXIT_FAILURE);
+    }
+    while (getline(&line, &len, fp) != -1) {
+        if (strncmp(line, "VmRSS", 5) == 0) {
+            sscanf(line, "%*s%ld", &rss);
+            break;
+        }
+    }
+    fclose(fp);
+    free(line);
+    // std::cout << "rss " << rss << std::endl;
+    return rss;
+}
+
 pthread_mutex_t numlock = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t ready = PTHREAD_COND_INITIALIZER;
 int threadnum = 0;
+long rss = 0;
+pthread_t thid;
 
 void *bucket_work(void *arg) {
     char pathbuffer[PATH_MAXLEN];
@@ -112,13 +134,24 @@ void *bucket_work(void *arg) {
     fclose(outfilefp);
 
     pthread_mutex_lock(&numlock);
-    loadsize = loadsize - bucketsize[i];
     --threadnum;
-    // std::cout << "finish bucket " << i << std::endl;
-    pthread_mutex_unlock(&numlock);
+    rss = getrss();
     pthread_cond_signal(&ready);
+    pthread_mutex_unlock(&numlock);
     free(arg);
     pthread_exit(0);
+}
+
+void assign_jobs(int &i) {
+    int *arg = (int *)malloc(sizeof(int));
+    *arg = i;
+    int err = pthread_create(&thid, NULL, bucket_work, arg);
+    if (err != 0) {
+        printf("error when pthread_create, err = %d\n", err);
+        exit(EXIT_FAILURE);
+    }
+    ++threadnum;
+    ++i;
 }
 
 int main(int argc, char** argv) {
@@ -129,17 +162,6 @@ int main(int argc, char** argv) {
     }
 
     char pathbuffer[PATH_MAXLEN];
-    struct stat statbuf;
-
-    for (auto i = 0; i < BUCKET_NUM; i++) {
-        sprintf(pathbuffer, "%s/%08x", BUCKET_FOLDER, i);
-        if (stat(pathbuffer, &statbuf) < 0) {
-            printf("error when get file size\n");
-            exit(EXIT_FAILURE);
-        }
-        bucketsize[i] = statbuf.st_size;
-        // std::cout << bucketsize[i] << " Bytes" << std::endl;
-    }
 
     auto finish = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> elapsed = finish - start;
@@ -148,23 +170,23 @@ int main(int argc, char** argv) {
 
     /* Stage 1 complete */ 
 
-    int err;
+    /* Use RSS increment of one thread to estimate thread limits */
     int i = 0;
-    pthread_t thid;
+    long beforerss = getrss();
+
+    pthread_mutex_lock(&numlock);
+    assign_jobs(i);
+    pthread_cond_wait(&ready, &numlock);
+    long rss_per_thread = rss - beforerss;
+    rss_per_thread = rss_per_thread < 1 ? 1 : rss_per_thread;
+    int maxthread = 500 * 1000 / rss_per_thread; /* use totally 500M */
+    maxthread = maxthread < 12 ? maxthread : 12;
+    pthread_mutex_unlock(&numlock);
 
     while (i < BUCKET_NUM) {
         pthread_mutex_lock(&numlock);
-        if (loadsize + bucketsize[i] < MAXBYTE) {
-            int *arg = (int *)malloc(sizeof(int));
-            *arg = i;
-            err = pthread_create(&thid, NULL, bucket_work, arg);
-            if (err != 0) {
-                printf("error when pthread_create, err = %d\n", err);
-                exit(EXIT_FAILURE);
-            }
-            ++threadnum;
-            loadsize = loadsize + bucketsize[i];
-            ++i;
+        if (threadnum < maxthread) {
+            assign_jobs(i);
         } else {
             pthread_cond_wait(&ready, &numlock);
         }

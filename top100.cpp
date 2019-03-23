@@ -6,6 +6,7 @@
 #include <cstring>
 #include <inttypes.h>
 #include <stdio.h>
+#include <sys/stat.h>
 
 #include "takeapart.h"
 #include "utils.h" 
@@ -44,9 +45,9 @@ struct UrlEqual {
 };
 
 struct Urlfreq {
-    int count;
+    uint32_t count;
     char *url;
-    Urlfreq(int c, char *u) : count(c) {
+    Urlfreq(uint32_t c, char *u) : count(c) {
         url = (char *)malloc((strlen(u) + 1) * sizeof(char));
         sprintf(url, "%s", u);
     }
@@ -76,6 +77,33 @@ void countWords(FILE *in, CounterMap& words) {
     }
 }
 
+void bucket_work(int i) {
+    char pathbuffer[PATH_MAXLEN];
+    FILE *infilefp;
+    FILE *outfilefp;
+
+    sprintf(pathbuffer, "%s/%08x", BUCKET_FOLDER, i);
+    if ((infilefp = fopen(pathbuffer, "r")) == NULL) {
+        printf("error when open file, errno = %d\n", errno);
+        exit(EXIT_FAILURE);
+    }
+    sprintf(pathbuffer, "%s/%08x.out", BUCKET_FOLDER, i);
+    if ((outfilefp = fopen(pathbuffer, "w")) == NULL) {
+        printf("error when open file, errno = %d\n", errno);
+        exit(EXIT_FAILURE);
+    }
+
+    CounterMap w;
+    countWords(infilefp, w);
+
+    for (CounterMap::iterator p = w.begin(); p != w.end(); ++p) {
+        fprintf(outfilefp, "%" PRIu32 " %s\n", 
+                p->second, p->first.url_with_prefix + 3 * 8);
+    }
+    fclose(infilefp);
+    fclose(outfilefp);
+}
+
 int main(int argc, char** argv) {
     auto start = std::chrono::high_resolution_clock::now();
 
@@ -83,42 +111,31 @@ int main(int argc, char** argv) {
         exit(EXIT_FAILURE);
     }
 
+    char pathbuffer[PATH_MAXLEN];
+    off_t bucketsize[BUCKET_NUM];
+    struct stat statbuf;
+    
+    for (auto i = 0; i < BUCKET_NUM; i++) {
+        sprintf(pathbuffer, "%s/%08x", BUCKET_FOLDER, i);
+        if (stat(pathbuffer, &statbuf) < 0) {
+            printf("error when get file size\n");
+            exit(EXIT_FAILURE);
+        }
+        bucketsize[i] = statbuf.st_size;
+        std::cout << bucketsize[i] << " Bytes" << std::endl;
+    }
+
     auto finish = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> elapsed = finish - start;
     std::cout << "1 Elapsed time: " << elapsed.count() << " s\n";
     start = finish;
 
-    /* Stage 1 complete */
+    /* Stage 1 complete */ 
 
-    char pathbuffer[PATH_MAXLEN];
-    char urlbuffer[URL_MAXLEN];
-    int c; //TODO: overflow
-    std::priority_queue<Urlfreq *, std::vector<Urlfreq *>, Comp> pq;
-    std::vector<Urlfreq *> result;
-    FILE *infilefp;
-    FILE *outfilefp;
-
+    off_t loadsize = 0;
     for (auto i = 0; i < BUCKET_NUM; i++) {
-        sprintf(pathbuffer, "%s/%08x", BUCKET_FOLDER, i);
-        if ((infilefp = fopen(pathbuffer, "r")) == NULL) {
-            printf("error when open file, errno = %d\n", errno);
-            exit(EXIT_FAILURE);
-        }
-        sprintf(pathbuffer, "%s/%08x.out", BUCKET_FOLDER, i);
-        if ((outfilefp = fopen(pathbuffer, "w")) == NULL) {
-            printf("error when open file, errno = %d\n", errno);
-            exit(EXIT_FAILURE);
-        }
-
-        CounterMap w;
-        countWords(infilefp, w);
-
-        for (CounterMap::iterator p = w.begin(); p != w.end(); ++p) {
-            fprintf(outfilefp, "%" PRIu32 " %s\n", 
-                    p->second, p->first.url_with_prefix + 3 * 8);
-        }
-        fclose(infilefp);
-        fclose(outfilefp);
+        bucket_work(i);
+        // std::cout << "finish bucket " << i << std::endl;
     }
 
     finish = std::chrono::high_resolution_clock::now();
@@ -128,6 +145,12 @@ int main(int argc, char** argv) {
 
     /* Stage 2 complete */
 
+    char urlbuffer[URL_MAXLEN];
+    FILE *infilefp;
+    uint32_t count;
+    std::priority_queue<Urlfreq *, std::vector<Urlfreq *>, Comp> pq;
+    std::vector<Urlfreq *> result;
+
     for (auto i = 0; i < BUCKET_NUM; i++) {
         sprintf(pathbuffer, "%s/%08x.out", BUCKET_FOLDER, i);
         if ((infilefp = fopen(pathbuffer, "r")) == NULL) {
@@ -135,8 +158,8 @@ int main(int argc, char** argv) {
             exit(EXIT_FAILURE);
         }
 
-        while(fscanf(infilefp, "%d %s", &c, urlbuffer) != EOF) {
-            Urlfreq *uf = new Urlfreq(c, urlbuffer);
+        while(fscanf(infilefp, "%" PRIu32 " %s", &count, urlbuffer) != EOF) {
+            Urlfreq *uf = new Urlfreq(count, urlbuffer);
             pq.push(uf);
             if (pq.size() > TOPK) {
                 delete pq.top();
@@ -153,7 +176,7 @@ int main(int argc, char** argv) {
 
     for (auto it = result.crbegin(); it != result.crend(); it++) {
         std::cout << (*it)->count << " " << (*it)->url << "\n";
-    } // ! need delete elements in result if append code
+    } // ! need free elements in result vector if append code
     finish = std::chrono::high_resolution_clock::now();
     elapsed = finish - start;
     std::cout << "3 Elapsed time: " << elapsed.count() << " s\n";

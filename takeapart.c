@@ -19,7 +19,15 @@
  * into buckets, thus the number of URL of a bucket follows Binomial
  * distribution with paramter N=3e9, p=1/250. And this distribution
  * could be approximated by Poisson distribution with lambda=N*p=1.2e7 
- * 
+ * And this could be approximated by Normal distribution with miu=1.2e7,
+ * sigma^2=1.2e7. By 3-sigma rule of normal distribution, 1.2e7 is good
+ * enough to discribe the number of URL in each bucket.
+ *
+ * If there are same URLs, unique URL number will be less. We will do
+ * counting jobs for each bucket, thus we only need to consider unique
+ * URLs. Bucket momery <= 1.2e7 * memory_per_URL <= 1GB, so 
+ * memory_per_URL should be less than 83B, at the worse case where all
+ * URL are unique and long.
  */
 
 int take_apart(const char *infile) {
@@ -57,8 +65,9 @@ int take_apart(const char *infile) {
         // printf("x64_128: %08x %08x %08x %08x\n",
         //        hash[0], hash[1], hash[2], hash[3]);
         uint32_t i = hash[0] & (BUCKET_NUM - 1);
-        if (fprintf(bucketfp[i], "%"PRIu32" %"PRIu32" %"PRIu32" %"PRIu32" %s", 
-            hash[0], hash[1], hash[2], hash[3], line) < 0) {
+        if (fprintf(bucketfp[i], 
+                    "%"PRIu32" %"PRIu32" %"PRIu32" %"PRIu32" %s",
+                    hash[0], hash[1], hash[2], hash[3], line) < 0) {
             printf("error when fprintf to bucket files, errno = %d\n", errno);
         };
     }

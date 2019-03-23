@@ -5,6 +5,7 @@
 #include <vector>
 #include <cstring>
 #include <inttypes.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <sys/stat.h>
 
@@ -77,10 +78,17 @@ void countWords(FILE *in, CounterMap& words) {
     }
 }
 
-void bucket_work(int i) {
+off_t bucketsize[BUCKET_NUM];
+off_t loadsize = 0;
+pthread_mutex_t numlock = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t ready = PTHREAD_COND_INITIALIZER;
+int threadnum = 0;
+
+void *bucket_work(void *arg) {
     char pathbuffer[PATH_MAXLEN];
     FILE *infilefp;
     FILE *outfilefp;
+    int i = *((int *)arg);
 
     sprintf(pathbuffer, "%s/%08x", BUCKET_FOLDER, i);
     if ((infilefp = fopen(pathbuffer, "r")) == NULL) {
@@ -102,6 +110,15 @@ void bucket_work(int i) {
     }
     fclose(infilefp);
     fclose(outfilefp);
+
+    pthread_mutex_lock(&numlock);
+    loadsize = loadsize - bucketsize[i];
+    --threadnum;
+    std::cout << "finish bucket " << i << std::endl;
+    pthread_mutex_unlock(&numlock);
+    pthread_cond_signal(&ready);
+    free(arg);
+    pthread_exit(0);
 }
 
 int main(int argc, char** argv) {
@@ -112,9 +129,8 @@ int main(int argc, char** argv) {
     }
 
     char pathbuffer[PATH_MAXLEN];
-    off_t bucketsize[BUCKET_NUM];
     struct stat statbuf;
-    
+
     for (auto i = 0; i < BUCKET_NUM; i++) {
         sprintf(pathbuffer, "%s/%08x", BUCKET_FOLDER, i);
         if (stat(pathbuffer, &statbuf) < 0) {
@@ -132,11 +148,34 @@ int main(int argc, char** argv) {
 
     /* Stage 1 complete */ 
 
-    off_t loadsize = 0;
-    for (auto i = 0; i < BUCKET_NUM; i++) {
-        bucket_work(i);
-        // std::cout << "finish bucket " << i << std::endl;
+    int err;
+    int i = 0;
+    pthread_t thid;
+
+    while (i < BUCKET_NUM) {
+        pthread_mutex_lock(&numlock);
+        if (loadsize + bucketsize[i] < MAXBYTE) {
+            int *arg = (int *)malloc(sizeof(int));
+            *arg = i;
+            err = pthread_create(&thid, NULL, bucket_work, arg);
+            if (err != 0) {
+                printf("error when pthread_create, err = %d\n", err);
+                exit(EXIT_FAILURE);
+            }
+            ++threadnum;
+            loadsize = loadsize + bucketsize[i];
+            ++i;
+        } else {
+            pthread_cond_wait(&ready, &numlock);
+        }
+        pthread_mutex_unlock(&numlock);
     }
+
+    pthread_mutex_lock(&numlock);
+    while (threadnum > 0) {
+        pthread_cond_wait(&ready, &numlock);
+    }
+    pthread_mutex_unlock(&numlock);
 
     finish = std::chrono::high_resolution_clock::now();
     elapsed = finish - start;

@@ -114,7 +114,7 @@ void *bucket_work(void *arg) {
     pthread_mutex_lock(&numlock);
     loadsize = loadsize - bucketsize[i];
     --threadnum;
-    std::cout << "finish bucket " << i << std::endl;
+    // std::cout << "finish bucket " << i << std::endl;
     pthread_mutex_unlock(&numlock);
     pthread_cond_signal(&ready);
     free(arg);
@@ -138,7 +138,7 @@ int main(int argc, char** argv) {
             exit(EXIT_FAILURE);
         }
         bucketsize[i] = statbuf.st_size;
-        std::cout << bucketsize[i] << " Bytes" << std::endl;
+        // std::cout << bucketsize[i] << " Bytes" << std::endl;
     }
 
     auto finish = std::chrono::high_resolution_clock::now();
